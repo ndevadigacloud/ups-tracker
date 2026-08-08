@@ -284,7 +284,30 @@ changed.
 | Fixed image tags via `--parameter-overrides` | A proper CI/CD pipeline (CodePipeline/GitHub Actions) building and deploying on every merge, with a Terraform/CDK option instead of hand-written CloudFormation for larger teams |
 | One shared CloudFormation stack per environment | Separate stacks per environment (dev/staging/prod) with parameter files, or nested stacks as the template grows |
 
-### 7.5 Cleanup
+### 7.5 Cost
+
+Estimated AWS cost (us-east-1, on-demand pricing) if the stack were left
+running continuously:
+
+| Resource | Spec | Cost if run 24/7 (730 hrs) |
+|---|---|---|
+| shipment-service task | 0.5 vCPU / 1 GB | ~$18/mo |
+| facility-service task | 0.5 vCPU / 1 GB | ~$18/mo |
+| kafka task | 0.5 vCPU / 1 GB | ~$18/mo |
+| frontend task | 0.25 vCPU / 0.5 GB | ~$9/mo |
+| ALB | base + light LCU usage | ~$16-25/mo |
+| CloudWatch Logs, ECR storage, data transfer | demo-level volume | ~$2-5/mo |
+| NAT Gateway | none — public subnets by design | $0 |
+| MongoDB Atlas | free M0 tier | $0 |
+| **Total, always-on** | | **~$85-95/mo** |
+
+None of these are fixed costs of "having deployed it" — they're hourly, so
+the number that actually matters is *how long the stack stays up*, not
+whether it exists. The ALB in particular has no cheaper mode (~$0.0225/hr
+flat regardless of traffic); the only lever is section 7.6's run/cleanup
+discipline, which brings a demo session to well under $1-2 total.
+
+### 7.6 Cleanup
 
 ```bash
 cd deploy/aws

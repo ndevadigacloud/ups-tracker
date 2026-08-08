@@ -87,3 +87,25 @@ lives), empties the ECR repos, then deletes the ECR stack. Nothing in this
 deployment has a resource that costs money once both stacks are deleted.
 Your MongoDB Atlas cluster is separate and unaffected — clean that up in the
 Atlas console if you're done with it.
+
+## Cost discipline: run for the demo, then tear down
+
+Every resource here bills by the hour (Fargate tasks, the ALB), not by
+having-been-deployed — see the cost table in the main README. Left running
+continuously this is roughly **$85-95/month**; run only for a demo window
+and torn down right after, it's **well under $1-2** per session. There's no
+"reduce the ALB's price" lever (it's a flat ~$0.0225/hr regardless of
+traffic) — the lever is *time running*, which `cleanup.sh` controls.
+
+Practical habit:
+```bash
+./deploy.sh      # right before a demo/interview
+#   ...demo...
+./cleanup.sh     # immediately after
+```
+
+If you want a safety net in case you forget: set a CloudWatch **billing
+alarm** (Billing preferences → Alerts, or a `AWS::Budgets::Budget` — not
+included in `main.yaml` since it's account-level, not stack-scoped) so an
+accidentally-left-running stack emails you well before it becomes a real
+bill.
