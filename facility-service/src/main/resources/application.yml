@@ -26,3 +26,12 @@ ups:
       shipment-created: shipment-created
       capacity-reserved: capacity-reserved
       capacity-rejected: capacity-rejected
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  level:
+    root: INFO
+    com.ups.facility: INFO
+    org.springframework.kafka: WARN
+    org.apache.kafka: WARN

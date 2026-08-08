@@ -2,6 +2,8 @@ package com.ups.facility.controller;
 
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +15,8 @@ import com.ups.facility.repository.FacilityRepository;
 @RequestMapping("/api/facilities")
 @CrossOrigin(origins = "*")
 public class FacilityController {
+
+    private static final Logger log = LoggerFactory.getLogger(FacilityController.class);
 
     private final FacilityRepository facilityRepository;
 
@@ -29,13 +33,18 @@ public class FacilityController {
     public ResponseEntity<Facility> createFacility(@RequestBody Facility facility) {
         facility.setId(null);
         facility.setCurrentLoadKg(0);
-        return ResponseEntity.status(HttpStatus.CREATED).body(facilityRepository.save(facility));
+        Facility saved = facilityRepository.save(facility);
+        log.info("Created facility {} ({}), capacity={} kg", saved.getId(), saved.getName(), saved.getCapacityKg());
+        return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<Facility> getFacility(@PathVariable String id) {
         return facilityRepository.findById(id)
                 .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+                .orElseGet(() -> {
+                    log.warn("Facility {} not found", id);
+                    return ResponseEntity.notFound().build();
+                });
     }
 }

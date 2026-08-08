@@ -5,6 +5,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -30,6 +32,8 @@ import jakarta.validation.Valid;
 @CrossOrigin(origins = "*")
 public class ShipmentController {
 
+    private static final Logger log = LoggerFactory.getLogger(ShipmentController.class);
+
     private static final Map<String, Integer> ESTIMATED_TRANSIT_DAYS = Map.of(
             "GROUND", 5, "AIR", 2, "EXPRESS", 1);
 
@@ -53,6 +57,10 @@ public class ShipmentController {
 
     @PostMapping
     public ResponseEntity<Shipment> createShipment(@Valid @RequestBody CreateShipmentRequest request) {
+        log.info("Received create-shipment request: origin={}, destination={}, weightKg={}, serviceLevel={}",
+                request.getOriginFacilityId(), request.getDestinationFacilityId(),
+                request.getWeightKg(), request.getServiceLevel());
+
         Shipment shipment = new Shipment();
         shipment.setSender(request.getSender());
         shipment.setReceiver(request.getReceiver());
@@ -65,6 +73,7 @@ public class ShipmentController {
                 ESTIMATED_TRANSIT_DAYS.get(request.getServiceLevel().name()), ChronoUnit.DAYS));
 
         Shipment saved = shipmentRepository.save(shipment);
+        log.info("Persisted shipment {} with status {}", saved.getId(), saved.getStatus());
 
         shipmentEventProducer.publishShipmentCreated(
                 new ShipmentCreatedEvent(saved.getId(), saved.getOriginFacilityId(), saved.getWeightKg()));
@@ -99,11 +108,13 @@ public class ShipmentController {
 
     @GetMapping(value = "/{id}/stream", produces = "text/event-stream")
     public SseEmitter streamShipmentUpdates(@PathVariable String id) {
+        log.info("Browser subscribed to SSE stream for shipment {}", id);
         return sseHub.subscribe(id);
     }
 
     @GetMapping("/dashboard")
     public DashboardResponse getDashboard() {
+        log.debug("Building dashboard aggregation");
         return dashboardService.buildDashboard();
     }
 }

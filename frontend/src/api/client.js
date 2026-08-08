@@ -1,9 +1,18 @@
 async function request(url, options) {
+  const method = options?.method ?? 'GET'
+  const start = performance.now()
+  console.debug(`[api] -> ${method} ${url}`)
+
   const res = await fetch(url, options)
+  const elapsedMs = Math.round(performance.now() - start)
+
   if (!res.ok) {
     const body = await res.text().catch(() => '')
+    console.error(`[api] <- ${method} ${url} ${res.status} (${elapsedMs}ms): ${body}`)
     throw new Error(`${res.status} ${res.statusText}: ${body}`)
   }
+
+  console.debug(`[api] <- ${method} ${url} ${res.status} (${elapsedMs}ms)`)
   if (res.status === 204) return null
   return res.json()
 }

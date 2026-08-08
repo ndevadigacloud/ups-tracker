@@ -17,13 +17,18 @@ export function useShipmentStream(shipmentId, initialEvents = []) {
   useEffect(() => {
     if (!shipmentId) return undefined
 
+    console.debug(`[sse] connecting for shipment ${shipmentId}`)
     const source = new EventSource(`/api/shipments/${shipmentId}/stream`)
 
+    source.onopen = () => console.debug(`[sse] connected for shipment ${shipmentId}`)
+
     source.addEventListener('status', (e) => {
+      console.debug(`[sse] status event for shipment ${shipmentId}:`, e.data)
       setStatus(JSON.parse(e.data))
     })
 
     source.addEventListener('tracking-event', (e) => {
+      console.debug(`[sse] tracking-event for shipment ${shipmentId}:`, e.data)
       const next = [...eventsRef.current, JSON.parse(e.data)]
       eventsRef.current = next
       setEvents(next)
@@ -31,9 +36,13 @@ export function useShipmentStream(shipmentId, initialEvents = []) {
 
     source.onerror = () => {
       // Browser auto-retries; nothing to do here beyond letting it reconnect.
+      console.warn(`[sse] connection error for shipment ${shipmentId}, browser will retry`)
     }
 
-    return () => source.close()
+    return () => {
+      console.debug(`[sse] closing stream for shipment ${shipmentId}`)
+      source.close()
+    }
   }, [shipmentId])
 
   return { status, events }

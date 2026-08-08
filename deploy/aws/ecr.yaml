@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ECR repositories for the UPS Tracker app. Kept in a separate stack from
+  main.yaml because images must be built and pushed here before the ECS
+  services in the main stack can reference them, and because ECR repos must
+  be emptied before they can be deleted (main.yaml's ECS resources shouldn't
+  block on that cleanup step).
+
+Resources:
+  ShipmentServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ups-tracker/shipment-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  FacilityServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ups-tracker/facility-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  FrontendRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ups-tracker/frontend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+Outputs:
+  ShipmentServiceRepoUri:
+    Value: !GetAtt ShipmentServiceRepo.RepositoryUri
+    Export:
+      Name: ups-tracker-shipment-service-repo-uri
+  FacilityServiceRepoUri:
+    Value: !GetAtt FacilityServiceRepo.RepositoryUri
+    Export:
+      Name: ups-tracker-facility-service-repo-uri
+  FrontendRepoUri:
+    Value: !GetAtt FrontendRepo.RepositoryUri
+    Export:
+      Name: ups-tracker-frontend-repo-uri

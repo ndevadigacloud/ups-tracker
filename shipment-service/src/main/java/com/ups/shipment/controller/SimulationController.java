@@ -1,5 +1,7 @@
 package com.ups.shipment.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +21,8 @@ import com.ups.shipment.kafka.ScanEventProducer;
 @CrossOrigin(origins = "*")
 public class SimulationController {
 
+    private static final Logger log = LoggerFactory.getLogger(SimulationController.class);
+
     private final ScanEventProducer scanEventProducer;
 
     public SimulationController(ScanEventProducer scanEventProducer) {
@@ -27,6 +31,7 @@ public class SimulationController {
 
     @PostMapping("/shipments/{id}/scan")
     public void simulateScan(@PathVariable String id, @RequestBody ScanEvent event) {
+        log.info("Simulate-scan request received for shipment {}: type={}", id, event.getEventType());
         event.setShipmentId(id);
         scanEventProducer.publish(event);
     }

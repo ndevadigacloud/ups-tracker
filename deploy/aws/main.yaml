@@ -1,0 +1,461 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  UPS Tracker: VPC, ECS Fargate cluster (frontend, shipment-service,
+  facility-service, self-hosted Kafka), and an ALB with path-based routing.
+  Both services share a single MongoDB Atlas cluster (connection string
+  passed as a parameter) using separate databases - shipments and facilities.
+  Simplified for a portfolio deployment: public subnets only (no NAT
+  gateway), single Kafka task (no HA).
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: ups-tracker
+
+  ShipmentServiceImage:
+    Type: String
+    Description: Full ECR image URI (with tag) for shipment-service
+
+  FacilityServiceImage:
+    Type: String
+    Description: Full ECR image URI (with tag) for facility-service
+
+  FrontendImage:
+    Type: String
+    Description: Full ECR image URI (with tag) for the frontend
+
+  MongoAtlasUri:
+    Type: String
+    NoEcho: true
+    Description: >
+      MongoDB Atlas connection string with NO database name at the end
+      (e.g. mongodb+srv://user:pass@cluster.mongodb.net). Each service
+      appends its own database name (shipments / facilities) to this.
+
+Resources:
+
+  ## ---------- Networking ----------
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  ## ---------- Security Groups ----------
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP to the ALB
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS tasks - allow traffic from the ALB and between tasks (Kafka)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  ServiceSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ServiceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref ServiceSecurityGroup
+
+  ## ---------- ECS Cluster & shared plumbing ----------
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref EnvironmentName
+
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: ups.local
+      Vpc: !Ref Vpc
+
+  KafkaDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: kafka
+      DnsConfig:
+        NamespaceId: !Ref ServiceDiscoveryNamespace
+        DnsRecords:
+          - Type: A
+            TTL: 10
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}
+      RetentionInDays: 7
+
+  ## ---------- ALB ----------
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  FrontendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /health
+
+  ShipmentTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Port: 8081
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/shipments
+
+  FacilityTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Port: 8082
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/facilities
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
+
+  ShipmentListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values: ['/api/shipments*', '/api/simulate*']
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ShipmentTargetGroup
+
+  FacilityListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpListener
+      Priority: 20
+      Conditions:
+        - Field: path-pattern
+          Values: ['/api/facilities*']
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FacilityTargetGroup
+
+  ## ---------- Kafka (self-hosted, single task, no HA) ----------
+
+  KafkaTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-kafka
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: kafka
+          Image: bitnami/kafka:3.7
+          PortMappings:
+            - ContainerPort: 9092
+          Environment:
+            - Name: KAFKA_CFG_NODE_ID
+              Value: '0'
+            - Name: KAFKA_CFG_PROCESS_ROLES
+              Value: controller,broker
+            - Name: KAFKA_CFG_LISTENERS
+              Value: PLAINTEXT://:9092,CONTROLLER://:9093
+            - Name: KAFKA_CFG_ADVERTISED_LISTENERS
+              Value: PLAINTEXT://kafka.ups.local:9092
+            - Name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              Value: CONTROLLER
+            - Name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+              Value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+            - Name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+              Value: 0@localhost:9093
+            - Name: ALLOW_PLAINTEXT_LISTENER
+              Value: 'yes'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: kafka
+
+  KafkaService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref KafkaTaskDefinition
+      ServiceRegistries:
+        - RegistryArn: !GetAtt KafkaDiscoveryService.Arn
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+
+  ## ---------- shipment-service ----------
+
+  ShipmentServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-shipment-service
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: shipment-service
+          Image: !Ref ShipmentServiceImage
+          PortMappings:
+            - ContainerPort: 8081
+          Environment:
+            - Name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              Value: kafka.ups.local:9092
+            - Name: SPRING_DATA_MONGODB_URI
+              Value: !Sub "${MongoAtlasUri}/shipments"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: shipment-service
+
+  ShipmentService:
+    Type: AWS::ECS::Service
+    DependsOn: [HttpListener, KafkaService]
+    Properties:
+      Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref ShipmentServiceTaskDefinition
+      LoadBalancers:
+        - ContainerName: shipment-service
+          ContainerPort: 8081
+          TargetGroupArn: !Ref ShipmentTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+
+  ## ---------- facility-service ----------
+
+  FacilityServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-facility-service
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: facility-service
+          Image: !Ref FacilityServiceImage
+          PortMappings:
+            - ContainerPort: 8082
+          Environment:
+            - Name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              Value: kafka.ups.local:9092
+            - Name: SPRING_DATA_MONGODB_URI
+              Value: !Sub "${MongoAtlasUri}/facilities"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: facility-service
+
+  FacilityService:
+    Type: AWS::ECS::Service
+    DependsOn: [HttpListener, KafkaService]
+    Properties:
+      Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref FacilityServiceTaskDefinition
+      LoadBalancers:
+        - ContainerName: facility-service
+          ContainerPort: 8082
+          TargetGroupArn: !Ref FacilityTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+
+  ## ---------- frontend ----------
+
+  FrontendTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-frontend
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: frontend
+          Image: !Ref FrontendImage
+          PortMappings:
+            - ContainerPort: 80
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: frontend
+
+  FrontendService:
+    Type: AWS::ECS::Service
+    DependsOn: HttpListener
+    Properties:
+      Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref FrontendTaskDefinition
+      LoadBalancers:
+        - ContainerName: frontend
+          ContainerPort: 80
+          TargetGroupArn: !Ref FrontendTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+
+Outputs:
+  AppUrl:
+    Description: URL of the deployed app
+    Value: !Sub http://${LoadBalancer.DNSName}
+  EcsClusterName:
+    Value: !Ref EcsCluster

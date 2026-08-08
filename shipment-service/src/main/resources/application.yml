@@ -27,3 +27,15 @@ ups:
       capacity-reserved: capacity-reserved
       capacity-rejected: capacity-rejected
       scan-event: scan-event
+
+logging:
+  pattern:
+    # Timestamp + level + logger on every line so CloudWatch Logs Insights queries
+    # can filter/sort on them; shipment/facility ids are embedded in the message
+    # itself, so `filter @message like /<id>/` traces one shipment end-to-end.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  level:
+    root: INFO
+    com.ups.shipment: INFO
+    org.springframework.kafka: WARN
+    org.apache.kafka: WARN

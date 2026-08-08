@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 
 import org.bson.Document;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.aggregation.AggregationResults;
@@ -14,6 +16,8 @@ import com.ups.shipment.dto.DashboardResponse;
 
 @Service
 public class DashboardService {
+
+    private static final Logger log = LoggerFactory.getLogger(DashboardService.class);
 
     private final MongoTemplate mongoTemplate;
 
@@ -38,9 +42,15 @@ public class DashboardService {
                         new Document("$sort", new Document("count", -1)),
                         new Document("$limit", 5))));
 
+        log.debug("Running dashboard $facet aggregation against 'shipments' collection");
+        long startNanos = System.nanoTime();
+
         Aggregation aggregation = Aggregation.newAggregation(context -> facetStage);
         AggregationResults<Document> results = mongoTemplate.aggregate(aggregation, "shipments", Document.class);
         Document facetResult = results.getUniqueMappedResult();
+
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+        log.info("Dashboard aggregation completed in {} ms", elapsedMs);
 
         Map<String, Long> countsByStatus = new LinkedHashMap<>();
         if (facetResult != null) {
@@ -60,6 +70,9 @@ public class DashboardService {
                 : facetResult.getList("topDestinations", Document.class).stream()
                     .map(d -> Map.<String, Object>of("facilityId", d.getString("_id"), "count", d.getInteger("count")))
                     .toList();
+
+        log.debug("Dashboard result: {} status buckets, {} days of volume, {} top destinations",
+                countsByStatus.size(), volumeByDay.size(), topDestinations.size());
 
         return new DashboardResponse(countsByStatus, volumeByDay, topDestinations);
     }
