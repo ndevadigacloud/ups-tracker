@@ -1,0 +1,28 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: facility-service
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/facilities
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: facility-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.ups.facility.dto"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+ups:
+  kafka:
+    topic:
+      shipment-created: shipment-created
+      capacity-reserved: capacity-reserved
+      capacity-rejected: capacity-rejected
