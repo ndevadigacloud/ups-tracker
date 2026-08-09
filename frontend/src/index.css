@@ -84,18 +84,7 @@ th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
 .next-action--ready { background: #f7f4ee; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
 .next-action__hint { color: #666; font-size: 0.8rem; margin: 0; }
 
-/* MongoDB-operator call-outs (interview talking points, shown right on the UI) */
-
-.mongo-note { color: #555; font-size: 0.9rem; }
-.mongo-note--small { font-size: 0.8rem; margin: -0.25rem 0 0.75rem; }
-.mongo-stage-pill {
-  background: #eef2ff;
-  color: #1e40af;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  font-size: 0.85em;
-  font-weight: 600;
-}
+.page-subtitle { color: #666; margin: -0.5rem 0 1.25rem; font-size: 0.95rem; }
 
 /* Facilities page */
 

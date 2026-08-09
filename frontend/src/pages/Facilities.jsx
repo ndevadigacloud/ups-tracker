@@ -72,14 +72,7 @@ export default function Facilities() {
   return (
     <div>
       <h2>Facility Capacity</h2>
-      <p className="mongo-note">
-        Every load number here was updated by an atomic MongoDB{' '}
-        <code className="mongo-stage-pill">findAndModify</code> with an{' '}
-        <code className="mongo-stage-pill">$expr</code> guard — the capacity check and the
-        increment happen as one operation, so two shipments booked into the same facility at the
-        same instant can't both pass the check before either write lands.
-        See <code>CapacityService.tryReserve()</code> in facility-service.
-      </p>
+      <p className="page-subtitle">Real-time load across our sorting hubs and delivery facilities.</p>
 
       <div className="summary-row">
         <div className="summary-tile">

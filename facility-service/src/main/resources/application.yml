@@ -16,9 +16,15 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.ups.facility.dto"
+        # shipment-service publishes ShipmentCreatedEvent from its own package
+        # (com.ups.shipment.dto) - map the shared alias to this service's own
+        # local class instead of trusting/loading the producer's class name.
+        spring.json.type.mapping: "shipmentCreatedEvent:com.ups.facility.dto.ShipmentCreatedEvent"
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.type.mapping: "capacityResultEvent:com.ups.facility.dto.CapacityResultEvent"
 
 ups:
   kafka:

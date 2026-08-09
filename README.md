@@ -131,19 +131,187 @@ facility can't both read "there's room" before either writes back (see
 
 ---
 
-## 4.1 React — 5 features to talk about in an interview
+## 4.1 React — 6 features to explain in an interview, with the actual code flow
 
-Pick any of these, name the file, and be ready to explain the *why*, not
-just the *what*.
+Don't just name-drop these — walk through *what calls what* below. Each one
+follows the same shape: the code, then the flow, then the one-sentence
+answer to "why did you do it this way."
 
-| # | Feature | Where | Talking point |
-|---|---|---|---|
-| 1 | **Custom hook wrapping a browser API** | [`useShipmentStream.js`](frontend/src/hooks/useShipmentStream.js) | Wraps `EventSource` (SSE) in a hook that returns `{status, events}` and cleans up the connection on unmount. Encapsulates subscribe/unsubscribe lifecycle so `TrackShipment.jsx` just consumes state — it never touches `EventSource` directly. This is the standard pattern for wrapping any imperative browser API (WebSocket, `IntersectionObserver`, etc.) in idiomatic React. |
-| 2 | **Server state vs. UI state, kept separate** | [`ShipmentList.jsx`](frontend/src/pages/ShipmentList.jsx), [`Dashboard.jsx`](frontend/src/pages/Dashboard.jsx) | TanStack Query owns *server* state (`useQuery` with `refetchInterval: 5000` for polling, cache keys like `['shipments', statusFilter, page]` so filter/page changes automatically refetch). Plain `useState` owns *UI-only* state (`statusFilter`, `page`). Conflating the two — e.g. fetching in a `useEffect` and stuffing the result into `useState` — is the most common React anti-pattern; this project deliberately avoids it. |
-| 3 | **Route-based code splitting** | [`App.jsx`](frontend/src/App.jsx) | Every page is `React.lazy(() => import('./pages/X.jsx'))`, wrapped once in a top-level `<Suspense>`. Each route's JS only downloads when the user navigates there, instead of one large bundle up front. |
-| 4 | **Controlled forms with schema-less validation** | [`CreateShipment.jsx`](frontend/src/pages/CreateShipment.jsx) | `react-hook-form`'s `register()` API — inputs stay uncontrolled internally (better perf than `useState` per field) while validation rules (`required`, `min`) are declared inline, and `formState.errors` drives inline error messages. |
-| 5 | **`useMemo` for derived data, not premature optimization** | [`Facilities.jsx`](frontend/src/pages/Facilities.jsx) | `summary` (total capacity, overall utilization %, at-risk count) is *derived* from `facilities` — recomputing it is cheap, so the `useMemo` here isn't about performance, it's about not recalculating a multi-field object on every render pass and keeping the derivation in one place. Good interview nuance: know when `useMemo` is about correctness/clarity vs. actual perf. |
-| 6 (bonus) | **Effect for cross-cutting sync, not data fetching** | [`TrackShipment.jsx`](frontend/src/pages/TrackShipment.jsx) | A `useEffect` invalidates the `next-scan-step` query whenever SSE pushes a new `status` or tracking event — using an effect to *react to state changing*, not to fetch data (that's TanStack Query's job). This is the distinction the React docs make in "You Might Not Need an Effect." |
+### 1. Custom hook wrapping a browser API (`useShipmentStream`)
+
+```js
+// frontend/src/hooks/useShipmentStream.js
+export function useShipmentStream(shipmentId, initialEvents = []) {
+  const [status, setStatus] = useState(null)
+  const [events, setEvents] = useState(initialEvents)
+  const eventsRef = useRef(initialEvents)
+
+  useEffect(() => {
+    if (!shipmentId) return undefined
+    const source = new EventSource(`/api/shipments/${shipmentId}/stream`)
+
+    source.addEventListener('status', (e) => setStatus(JSON.parse(e.data)))
+    source.addEventListener('tracking-event', (e) => {
+      const next = [...eventsRef.current, JSON.parse(e.data)]
+      eventsRef.current = next
+      setEvents(next)
+    })
+
+    return () => source.close()   // cleanup on unmount / shipmentId change
+  }, [shipmentId])
+
+  return { status, events }
+}
+```
+
+**Code flow:** `TrackShipment.jsx` calls `useShipmentStream(id, initialEvents)`
+→ the hook opens one `EventSource` connection to shipment-service's
+`/stream` endpoint → every time the backend pushes an SSE `status` or
+`tracking-event` message (see section 3's sequence diagram), the hook's
+listeners fire and call `setStatus`/`setEvents` → React re-renders
+`TrackShipment.jsx` with the new data, automatically, with zero polling.
+The `return () => source.close()` line is the cleanup function — React
+calls it when the component unmounts *or* before re-running the effect
+(e.g. if you navigate from one shipment's tracking page to another,
+`shipmentId` changes, the old connection closes, a new one opens).
+
+**Why this way:** any imperative, subscription-based browser API
+(`EventSource`, `WebSocket`, `IntersectionObserver`, `ResizeObserver`)
+gets the same treatment — hide the subscribe/cleanup dance inside a hook so
+consuming components just read state and never touch the raw API. This is
+*the* canonical custom-hook interview example.
+
+### 2. Server state vs. UI state, kept in two different places on purpose
+
+```js
+// frontend/src/pages/ShipmentList.jsx
+const [statusFilter, setStatusFilter] = useState('')   // UI state
+const [page, setPage] = useState(0)                     // UI state
+
+const { data, isLoading, isError } = useQuery({          // server state
+  queryKey: ['shipments', statusFilter, page],
+  queryFn: () => api.listShipments({ status: statusFilter || undefined, page }),
+  refetchInterval: 5000,
+})
+```
+
+**Code flow:** `statusFilter`/`page` live in plain `useState` because
+they're purely local UI selections. TanStack Query's `useQuery` owns the
+actual server data — its `queryKey` array `['shipments', statusFilter, page]`
+means: whenever `statusFilter` or `page` changes, TanStack Query
+automatically treats that as a *different query*, refetches, and caches the
+result separately per combination. `refetchInterval: 5000` re-runs it every
+5 seconds regardless, so the list stays live as shipments move through
+their saga. Selecting a new filter in the `<select>` triggers `setStatusFilter`
+→ new `queryKey` → automatic refetch → new rows rendered. No manual
+`useEffect(() => { fetch(...) }, [statusFilter])` anywhere.
+
+**Why this way:** mixing the two — fetching inside a `useEffect` and storing
+the result in `useState` — is the single most common React anti-pattern
+(you end up hand-rolling loading/error/race-condition/cache-invalidation
+logic that a data-fetching library already solved). Knowing to draw this
+line is a strong signal in an interview.
+
+### 3. Route-based code splitting
+
+```js
+// frontend/src/App.jsx
+const CreateShipment = lazy(() => import('./pages/CreateShipment.jsx'))
+const Dashboard = lazy(() => import('./pages/Dashboard.jsx'))
+// ...
+
+<Suspense fallback={<p>Loading…</p>}>
+  <Routes>
+    <Route path="/" element={<CreateShipment />} />
+    <Route path="/dashboard" element={<Dashboard />} />
+    {/* ... */}
+  </Routes>
+</Suspense>
+```
+
+**Code flow:** `lazy()` wraps a dynamic `import()` instead of a static one —
+Vite turns each into its own JS chunk at build time. The first time a route
+renders, React sees the lazy component isn't loaded yet, shows the nearest
+`<Suspense fallback>`, kicks off the chunk's network request, and swaps in
+the real component once it arrives. Visit only "/" and "/dashboard" in a
+session, and the `Facilities.jsx`/`TrackShipment.jsx` chunks never download
+at all.
+
+**Why this way:** without it, one JS bundle contains every page's code
+(including a charting library only the Dashboard needs), so first paint on
+any page pays for code the user may never visit.
+
+### 4. Controlled forms without a validation schema library
+
+```js
+// frontend/src/pages/CreateShipment.jsx
+const { register, handleSubmit, formState: { errors } } = useForm()
+
+<input {...register('senderName', { required: true })} />
+{errors.senderName && <span className="error">Required</span>}
+```
+
+**Code flow:** `register('senderName', {...})` returns `{name, onChange,
+onBlur, ref}`, spread onto the `<input>` — react-hook-form manages the
+input's value **outside** React's render cycle via the DOM ref (an
+"uncontrolled" input), only triggering a re-render when validation state
+changes. On submit, `handleSubmit(onSubmit)` runs every field's rules,
+populates `errors` if any fail, and only calls `onSubmit(formValues)` with
+the assembled `CreateShipmentRequest` payload if everything passes.
+
+**Why this way:** a fully-controlled form (`useState` per field +
+`onChange` re-rendering the whole form on every keystroke) is the naive
+approach and gets noticeably slower as a form grows; react-hook-form avoids
+that re-render churn while still giving you per-field error state.
+
+### 5. `useMemo` for derived data — clarity, not just performance
+
+```js
+// frontend/src/pages/Facilities.jsx
+const summary = useMemo(() => {
+  const totalCapacity = facilities.reduce((sum, f) => sum + f.capacityKg, 0)
+  const totalLoad = facilities.reduce((sum, f) => sum + f.currentLoadKg, 0)
+  const atRisk = facilities.filter((f) => f.currentLoadKg / f.capacityKg >= 0.7).length
+  return { totalCapacity, totalLoad, overallPct: ..., atRisk }
+}, [facilities])
+```
+
+**Code flow:** `facilities` comes from `useQuery` (refetched every 5s).
+Every time it changes, `useMemo` recomputes `summary` in one place;
+whenever `facilities` *hasn't* changed (e.g. some unrelated state update
+re-renders this component), the memoized object is reused instead of
+recalculated.
+
+**Why this way — the interview nuance:** this isn't a performance
+optimization (summing a handful of facilities is nearly free) — it's about
+correctness and readability: one derivation, one dependency array, instead
+of four separate `reduce`/`filter` calls scattered through the JSX. Know
+the difference between "I used `useMemo` because profiling showed a real
+cost" and "I used it to keep a derived value's computation in one place" —
+conflating them is a common tell that a candidate is cargo-culting the hook.
+
+### 6. `useEffect` for synchronization, not for fetching data
+
+```js
+// frontend/src/pages/TrackShipment.jsx
+useEffect(() => {
+  if (id) queryClient.invalidateQueries({ queryKey: ['next-scan-step', id] })
+}, [id, currentStatus, events.length, queryClient])
+```
+
+**Code flow:** `currentStatus` and `events` are driven by the SSE hook from
+feature #1 — they change as Kafka events arrive, entirely outside any user
+click. This effect's job is to keep a *different* piece of server state
+(the "what's the next valid scan?" query) in sync with those SSE-driven
+changes, by telling TanStack Query to refetch it whenever status or the
+event list changes.
+
+**Why this way:** the effect doesn't fetch anything itself — it just
+reacts to state that changed for reasons outside this component's control
+and tells the *data layer* to refetch. That's the line the React docs draw
+in "You Might Not Need an Effect": effects are for synchronizing with an
+external system (or, as here, one part of your state with another), not a
+general-purpose "run this after render" hook.
 
 ---
 
@@ -151,10 +319,10 @@ just the *what*.
 
 | # | Feature | Where | Talking point |
 |---|---|---|---|
-| 1 | **`$facet` — multiple aggregations in one round trip** | [`DashboardService.buildDashboard()`](shipment-service/src/main/java/com/ups/shipment/service/DashboardService.java) | One query computes three independent results — status counts, daily volume, top destinations — each in its own pipeline branch, executed server-side in parallel. The alternative (3 separate `find`/`aggregate` calls) means 3 round trips and 3x the network overhead for the same answer. Visible live on the **Dashboard page** — each chart is labeled with the exact stage that produced it. |
+| 1 | **`$facet` — multiple aggregations in one round trip** | [`DashboardService.buildDashboard()`](shipment-service/src/main/java/com/ups/shipment/service/DashboardService.java) | One query computes three independent results — status counts, daily volume, top destinations — each in its own pipeline branch, executed server-side in parallel. The alternative (3 separate `find`/`aggregate` calls) means 3 round trips and 3x the network overhead for the same answer. Powers every panel on the **Dashboard page**. |
 | 2 | **`$group` + accumulators** | same file | `$group` by `status` (or `destinationFacilityId`, or a truncated date) with `$sum: 1` is the aggregation-pipeline equivalent of SQL's `GROUP BY ... COUNT(*)`. Know this mapping cold — it's the most commonly asked Mongo-vs-SQL translation question. |
 | 3 | **`$dateToString` for date bucketing** | same file | Truncates `createdAt` (a `Date`) to a `"%Y-%m-%d"` string *before* grouping, so all shipments from the same calendar day collapse into one bucket — this is how you build a "volume per day" chart without pulling raw documents into the app and bucketing in Java. |
-| 4 | **Atomic `findAndModify` with an `$expr` guard** | [`CapacityService.tryReserve()`](facility-service/src/main/java/com/ups/facility/service/CapacityService.java) | The single most important correctness detail in this whole project. `$expr: {$lte: [{$add: ["$currentLoadKg", weightKg]}, "$capacityKg"]}` combined with `$inc` in **one atomic operation** means the check-then-write can't race — two concurrent shipments booked into the same facility can't both pass the capacity check before either commits. Compare this to the naive (wrong) approach: `find()` the facility, check in application code, then `update()` — which has a TOCTOU race under concurrent load. Visible on the **Facilities page** caption. |
+| 4 | **Atomic `findAndModify` with an `$expr` guard** | [`CapacityService.tryReserve()`](facility-service/src/main/java/com/ups/facility/service/CapacityService.java) | The single most important correctness detail in this whole project. `$expr: {$lte: [{$add: ["$currentLoadKg", weightKg]}, "$capacityKg"]}` combined with `$inc` in **one atomic operation** means the check-then-write can't race — two concurrent shipments booked into the same facility can't both pass the capacity check before either commits. Compare this to the naive (wrong) approach: `find()` the facility, check in application code, then `update()` — which has a TOCTOU race under concurrent load. This is what keeps the **Facilities page**'s capacity numbers correct under concurrent bookings. |
 | 5 | **Indexes on query/sort fields** | [`Shipment.java`](shipment-service/src/main/java/com/ups/shipment/model/Shipment.java) | `@Indexed` on `status` and `createdAt` — the two fields the dashboard aggregation and the filtered shipment list both query/sort on. Know *why*: without an index, `$sort`/`$match` on these fields forces a full collection scan. |
 | 6 | **Database-per-service, one cluster** | `application.yml` in both services | `shipments` and `facilities` are two separate logical databases in one Atlas cluster — each service only ever touches its own database, no cross-service `$lookup`. This is a deliberate microservices boundary (each service owns its data), kept even though sharing one cluster physically for cost reasons — a good "how would you explain a compromise you made" interview answer. |
 

@@ -16,9 +16,20 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.ups.shipment.dto"
+        # facility-service publishes CapacityResultEvent from its own package
+        # (com.ups.facility.dto). Without this mapping, JsonDeserializer uses
+        # the producer's __TypeId__ header verbatim and tries to load a class
+        # that doesn't exist in this service's JVM, silently dropping every
+        # capacity result and leaving shipments stuck at CREATED.
+        spring.json.type.mapping: "capacityResultEvent:com.ups.shipment.dto.CapacityResultEvent,scanEvent:com.ups.shipment.dto.ScanEvent"
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        # Send the same logical aliases instead of this service's own class
+        # names, so facility-service (or any other consumer) can map them to
+        # its own local DTO classes.
+        spring.json.type.mapping: "shipmentCreatedEvent:com.ups.shipment.dto.ShipmentCreatedEvent,scanEvent:com.ups.shipment.dto.ScanEvent"
 
 ups:
   kafka:
