@@ -2,12 +2,15 @@ package com.ups.facility.kafka;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import com.ups.facility.dto.CapacityResultEvent;
 import com.ups.facility.dto.ShipmentCreatedEvent;
 import com.ups.facility.service.CapacityService;
+
+import jakarta.annotation.PostConstruct;
 
 @Component
 public class ShipmentCreatedConsumer {
@@ -17,9 +20,21 @@ public class ShipmentCreatedConsumer {
     private final CapacityService capacityService;
     private final CapacityResultProducer capacityResultProducer;
 
+    @Value("${ups.kafka.topic.shipment-created}")
+    private String shipmentCreatedTopic;
+
     public ShipmentCreatedConsumer(CapacityService capacityService, CapacityResultProducer capacityResultProducer) {
         this.capacityService = capacityService;
         this.capacityResultProducer = capacityResultProducer;
+    }
+
+    @PostConstruct
+    void logRegistration() {
+        // Confirms the Spring bean itself was created and wired successfully.
+        // If this line is missing from the logs entirely, the problem is a
+        // Spring context/wiring failure, not a Kafka connectivity issue -
+        // check for a startup exception before this point instead.
+        log.info("ShipmentCreatedConsumer registered, listening on topic '{}'", shipmentCreatedTopic);
     }
 
     @KafkaListener(topics = "${ups.kafka.topic.shipment-created}")
