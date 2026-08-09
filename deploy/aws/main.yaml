@@ -294,6 +294,20 @@ Resources:
               Value: 0@localhost:9093
             - Name: KAFKA_INTER_BROKER_LISTENER_NAME
               Value: PLAINTEXT
+            # This is a single-node broker. Kafka's internal __consumer_offsets
+            # topic (required for ANY consumer group to function) defaults to
+            # replication factor 3 - which can never be satisfied with only one
+            # broker, so it silently fails to auto-create and every consumer
+            # group hangs/never appears, while plain topic reads (e.g. Kafka
+            # UI's message browser, which doesn't use a consumer group) keep
+            # working fine. This is almost certainly why no consumer group has
+            # ever shown up despite topics/messages being visible.
+            - Name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              Value: '1'
+            - Name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              Value: '1'
+            - Name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              Value: '1'
           LogConfiguration:
             LogDriver: awslogs
             Options:

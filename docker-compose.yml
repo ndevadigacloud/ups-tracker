@@ -26,6 +26,12 @@ services:
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       - KAFKA_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # Single-node broker: __consumer_offsets defaults to replication factor 3,
+      # which can never succeed with 1 broker - breaks all consumer groups
+      # silently while plain topic reads keep working. Must be 1 here.
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
     volumes:
       - kafka-data:/var/lib/kafka/data
 
