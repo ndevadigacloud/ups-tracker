@@ -266,28 +266,30 @@ Resources:
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       ContainerDefinitions:
         - Name: kafka
-          # Bitnami only publishes ':latest' for kafka on the free Docker Hub tier now
-          # (pinned version tags moved behind a paid Bitnami Secure subscription).
-          Image: bitnami/kafka:latest
+          # Bitnami pulled the entire free-tier bitnami/kafka repo from Docker Hub
+          # (zero tags left, including :latest - verified against the registry API).
+          # Using the official Apache Kafka image instead, published by the Kafka
+          # project itself, which won't disappear behind a vendor's pricing change.
+          Image: apache/kafka:4.1.2
           PortMappings:
             - ContainerPort: 9092
           Environment:
-            - Name: KAFKA_CFG_NODE_ID
+            - Name: KAFKA_NODE_ID
               Value: '0'
-            - Name: KAFKA_CFG_PROCESS_ROLES
-              Value: controller,broker
-            - Name: KAFKA_CFG_LISTENERS
+            - Name: KAFKA_PROCESS_ROLES
+              Value: broker,controller
+            - Name: KAFKA_LISTENERS
               Value: PLAINTEXT://:9092,CONTROLLER://:9093
-            - Name: KAFKA_CFG_ADVERTISED_LISTENERS
+            - Name: KAFKA_ADVERTISED_LISTENERS
               Value: PLAINTEXT://kafka.ups.local:9092
-            - Name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+            - Name: KAFKA_CONTROLLER_LISTENER_NAMES
               Value: CONTROLLER
-            - Name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+            - Name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
               Value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-            - Name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+            - Name: KAFKA_CONTROLLER_QUORUM_VOTERS
               Value: 0@localhost:9093
-            - Name: ALLOW_PLAINTEXT_LISTENER
-              Value: 'yes'
+            - Name: KAFKA_INTER_BROKER_LISTENER_NAME
+              Value: PLAINTEXT
           LogConfiguration:
             LogDriver: awslogs
             Options:
