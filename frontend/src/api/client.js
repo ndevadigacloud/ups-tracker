@@ -13,8 +13,9 @@ async function request(url, options) {
   }
 
   console.debug(`[api] <- ${method} ${url} ${res.status} (${elapsedMs}ms)`)
-  if (res.status === 204) return null
-  return res.json()
+  if (res.status === 204 || res.status === 202) return null
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
 }
 
 export const api = {
@@ -31,6 +32,7 @@ export const api = {
   },
   getShipment: (id) => request(`/api/shipments/${id}`),
   getTrackingEvents: (id) => request(`/api/shipments/${id}/tracking-events`),
+  getNextScanStep: (id) => request(`/api/shipments/${id}/next-scan-step`),
   getDashboard: () => request('/api/shipments/dashboard'),
   simulateScan: (id, payload) =>
     request(`/api/simulate/shipments/${id}/scan`, {

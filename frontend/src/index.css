@@ -67,5 +67,120 @@ th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
   width: 10px; height: 10px; border-radius: 50%; background: #351c15;
 }
 .timeline .ts { color: #777; font-size: 0.8rem; }
+.timeline-desc { color: #555; font-size: 0.85rem; margin-top: 0.1rem; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+
+/* Next action (single dynamic scan-step button) */
+
+.next-action {
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  font-size: 0.9rem;
+}
+.next-action--pending { background: #f0f0f0; color: #555; }
+.next-action--rejected { background: #fbdada; color: #a11212; }
+.next-action--done { background: #d4f7dc; color: #1a7431; }
+.next-action--ready { background: #f7f4ee; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.next-action__hint { color: #666; font-size: 0.8rem; margin: 0; }
+
+/* MongoDB-operator call-outs (interview talking points, shown right on the UI) */
+
+.mongo-note { color: #555; font-size: 0.9rem; }
+.mongo-note--small { font-size: 0.8rem; margin: -0.25rem 0 0.75rem; }
+.mongo-stage-pill {
+  background: #eef2ff;
+  color: #1e40af;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+/* Facilities page */
+
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+.summary-tile {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.summary-tile--alert { box-shadow: 0 0 0 2px #f0b429 inset; }
+.summary-tile__value { font-size: 1.5rem; font-weight: 700; color: #351c15; }
+
+.stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #888;
+  font-weight: 600;
+}
+.stat-value { font-weight: 600; }
+
+.facility-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+}
+
+.facility-card {
+  background: white;
+  border-radius: 10px;
+  padding: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  border-left: 4px solid #ccc;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.facility-card--ok { border-left-color: #1a7431; }
+.facility-card--warning { border-left-color: #b78103; }
+.facility-card--critical { border-left-color: #a11212; }
+
+.facility-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.facility-card__header h3 { margin: 0 0 0.15rem; font-size: 1.05rem; }
+.facility-card__city { color: #777; font-size: 0.85rem; }
+
+.utilization-pill {
+  flex-shrink: 0;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.utilization-pill--ok { background: #d4f7dc; color: #1a7431; }
+.utilization-pill--warning { background: #fff3cd; color: #8a6500; }
+.utilization-pill--critical { background: #fbdada; color: #a11212; }
+
+.capacity-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: #eee;
+  overflow: hidden;
+}
+.capacity-bar__fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+.capacity-bar__fill--ok { background: #2fa15a; }
+.capacity-bar__fill--warning { background: #e0a706; }
+.capacity-bar__fill--critical { background: #d43f3f; }
+
+.facility-card__stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+.facility-card__stats > div { display: flex; flex-direction: column; gap: 0.15rem; }
+.facility-card__stats .stat-value { font-size: 0.9rem; }

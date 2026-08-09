@@ -16,6 +16,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.ups.shipment.dto.CreateShipmentRequest;
 import com.ups.shipment.dto.DashboardResponse;
+import com.ups.shipment.dto.NextScanStepResponse;
 import com.ups.shipment.dto.ShipmentCreatedEvent;
 import com.ups.shipment.kafka.ShipmentEventProducer;
 import com.ups.shipment.model.Shipment;
@@ -23,6 +24,7 @@ import com.ups.shipment.model.TrackingEvent;
 import com.ups.shipment.repository.ShipmentRepository;
 import com.ups.shipment.repository.TrackingEventRepository;
 import com.ups.shipment.service.DashboardService;
+import com.ups.shipment.service.ScanFlowService;
 import com.ups.shipment.sse.ShipmentSseHub;
 
 import jakarta.validation.Valid;
@@ -41,17 +43,20 @@ public class ShipmentController {
     private final TrackingEventRepository trackingEventRepository;
     private final ShipmentEventProducer shipmentEventProducer;
     private final DashboardService dashboardService;
+    private final ScanFlowService scanFlowService;
     private final ShipmentSseHub sseHub;
 
     public ShipmentController(ShipmentRepository shipmentRepository,
                                TrackingEventRepository trackingEventRepository,
                                ShipmentEventProducer shipmentEventProducer,
                                DashboardService dashboardService,
+                               ScanFlowService scanFlowService,
                                ShipmentSseHub sseHub) {
         this.shipmentRepository = shipmentRepository;
         this.trackingEventRepository = trackingEventRepository;
         this.shipmentEventProducer = shipmentEventProducer;
         this.dashboardService = dashboardService;
+        this.scanFlowService = scanFlowService;
         this.sseHub = sseHub;
     }
 
@@ -104,6 +109,14 @@ public class ShipmentController {
     @GetMapping("/{id}/tracking-events")
     public List<TrackingEvent> getTrackingEvents(@PathVariable String id) {
         return trackingEventRepository.findByShipmentIdOrderByTimestampAsc(id);
+    }
+
+    @GetMapping("/{id}/next-scan-step")
+    public ResponseEntity<NextScanStepResponse> getNextScanStep(@PathVariable String id) {
+        return shipmentRepository.findById(id)
+                .map(scanFlowService::nextStep)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping(value = "/{id}/stream", produces = "text/event-stream")

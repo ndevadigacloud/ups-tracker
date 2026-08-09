@@ -4,6 +4,10 @@ import { api } from '../api/client.js'
 
 const COLORS = ['#351c15', '#ffb500', '#8a6500', '#1e40af', '#1a7431', '#a11212', '#777']
 
+function MongoStagePill({ children }) {
+  return <code className="mongo-stage-pill">{children}</code>
+}
+
 export default function Dashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
@@ -18,14 +22,20 @@ export default function Dashboard() {
   return (
     <div>
       <h2>Operations Dashboard</h2>
-      <p style={{ color: '#666' }}>
-        Backed by a single MongoDB <code>$facet</code> aggregation — status counts, daily volume,
-        and top destination facilities computed in one round trip.
+      <p className="mongo-note">
+        All three panels below come from <strong>one</strong> MongoDB query — a single
+        <MongoStagePill>$facet</MongoStagePill> aggregation with three parallel branches, computed
+        server-side in one round trip instead of three separate queries.
+        See <code>DashboardService.buildDashboard()</code> in shipment-service.
       </p>
 
       <div className="grid-2">
         <div className="card">
           <h3>Shipments by status</h3>
+          <p className="mongo-note mongo-note--small">
+            <MongoStagePill>$group</MongoStagePill> by <code>status</code>, counting with{' '}
+            <MongoStagePill>$sum: 1</MongoStagePill>.
+          </p>
           <ResponsiveContainer width="100%" height={260}>
             <PieChart>
               <Pie data={statusData} dataKey="count" nameKey="status" outerRadius={90} label>
@@ -39,6 +49,10 @@ export default function Dashboard() {
 
         <div className="card">
           <h3>Volume by day</h3>
+          <p className="mongo-note mongo-note--small">
+            <MongoStagePill>$group</MongoStagePill> by a <MongoStagePill>$dateToString</MongoStagePill>-truncated
+            <code>createdAt</code>, then <MongoStagePill>$sort</MongoStagePill> ascending.
+          </p>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={data.volumeByDay}>
               <XAxis dataKey="date" />
@@ -52,6 +66,10 @@ export default function Dashboard() {
 
       <div className="card">
         <h3>Top destination facilities</h3>
+        <p className="mongo-note mongo-note--small">
+          <MongoStagePill>$group</MongoStagePill> by <code>destinationFacilityId</code>, then{' '}
+          <MongoStagePill>$sort</MongoStagePill> by count descending and <MongoStagePill>$limit: 5</MongoStagePill>.
+        </p>
         <table>
           <thead><tr><th>Facility ID</th><th>Shipments</th></tr></thead>
           <tbody>

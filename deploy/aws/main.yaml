@@ -114,6 +114,10 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
 
   ServiceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -315,6 +319,77 @@ Resources:
           SecurityGroups:
             - !Ref ServiceSecurityGroup
 
+  ## ---------- Kafka UI (visualize topics/messages/consumer groups) ----------
+  ## Exposed on its own ALB listener port (8080) rather than a path rule on the
+  ## port-80 listener, since kafka-ui serves its UI from the root path and
+  ## breaks under a path prefix like /kafka-ui*.
+
+  KafkaUiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /actuator/health
+
+  KafkaUiListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 8080
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref KafkaUiTargetGroup
+
+  KafkaUiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-kafka-ui
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: kafka-ui
+          Image: provectuslabs/kafka-ui:latest
+          PortMappings:
+            - ContainerPort: 8080
+          Environment:
+            - Name: KAFKA_CLUSTERS_0_NAME
+              Value: ups-tracker
+            - Name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+              Value: kafka.ups.local:9092
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: kafka-ui
+
+  KafkaUiService:
+    Type: AWS::ECS::Service
+    DependsOn: [KafkaUiListener, KafkaService]
+    Properties:
+      Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref KafkaUiTaskDefinition
+      LoadBalancers:
+        - ContainerName: kafka-ui
+          ContainerPort: 8080
+          TargetGroupArn: !Ref KafkaUiTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+
   ## ---------- shipment-service ----------
 
   ShipmentServiceTaskDefinition:
@@ -461,5 +536,8 @@ Outputs:
   AppUrl:
     Description: URL of the deployed app
     Value: !Sub http://${LoadBalancer.DNSName}
+  KafkaUiUrl:
+    Description: URL of the Kafka UI (browse topics, messages, consumer groups)
+    Value: !Sub http://${LoadBalancer.DNSName}:8080
   EcsClusterName:
     Value: !Ref EcsCluster

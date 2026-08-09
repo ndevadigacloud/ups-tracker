@@ -73,4 +73,7 @@ aws cloudformation deploy \
 echo "==> [5/5] Done"
 APP_URL="$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$MAIN_STACK" \
   --query "Stacks[0].Outputs[?OutputKey=='AppUrl'].OutputValue" --output text)"
-echo "App URL: $APP_URL"
+KAFKA_UI_URL="$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$MAIN_STACK" \
+  --query "Stacks[0].Outputs[?OutputKey=='KafkaUiUrl'].OutputValue" --output text)"
+echo "App URL:      $APP_URL"
+echo "Kafka UI URL: $KAFKA_UI_URL"

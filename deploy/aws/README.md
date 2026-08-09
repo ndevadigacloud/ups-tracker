@@ -13,6 +13,13 @@ backend services connect to one MongoDB Atlas cluster, each using its own
 database (`shipments`, `facilities`) — no database server is provisioned by
 CloudFormation.
 
+**Kafka UI** (the same `provectuslabs/kafka-ui` image used in local
+`docker-compose.yml`) runs as a fifth Fargate service, exposed on its own
+ALB listener at **port 8080** (not a path rule on port 80 — kafka-ui serves
+its UI from the root path and breaks under a path prefix). After deploy,
+browse topics/messages/consumer groups at
+`http://<alb-dns-name>:8080`.
+
 Simplifications made deliberately for a portfolio deploy (call these out if
 asked in an interview): public subnets only (no NAT gateway, so no idle
 cost), single Kafka task (no HA/replication), no HTTPS/ACM cert, no
@@ -53,12 +60,16 @@ This will:
 1. Deploy `ecr.yaml` (3 ECR repos).
 2. Build and push the shipment-service, facility-service, and frontend
    Docker images, tagged with a timestamp.
-3. Deploy `main.yaml` (VPC, ECS cluster, Kafka service, both app services,
-   ALB) with those image URIs as parameters.
-4. Print the ALB URL — open it in a browser.
+3. Deploy `main.yaml` (VPC, ECS cluster, Kafka + Kafka UI services, both
+   app services, ALB) with those image URIs as parameters.
+4. Print the app URL and the Kafka UI URL — open either in a browser.
 
 Re-running `./deploy.sh` after code changes rebuilds and pushes new image
-tags and updates the stack in place (ECS does a rolling deployment).
+tags and updates the stack in place (ECS does a rolling deployment) — this
+is also how you pick up template-only changes (like the Kafka UI service
+being added) on a stack that's already deployed: just run it again, no
+teardown needed. CloudFormation diffs the template and only touches what
+changed.
 
 ## Tracing a shipment through CloudWatch Logs
 

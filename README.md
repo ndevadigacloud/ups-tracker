@@ -36,23 +36,26 @@ graph TB
     end
 
     subgraph AWS["AWS (ECS Fargate, behind one ALB)"]
-        ALB[Application Load Balancer<br/>path-based routing]
+        ALB[Application Load Balancer<br/>path-based routing, 2 listeners: 80 + 8080]
         FE[frontend service<br/>nginx serving the React build]
         SS[shipment-service :8081<br/>Spring Boot]
         FS[facility-service :8082<br/>Spring Boot]
         KAFKA[(Kafka<br/>self-hosted, Cloud Map DNS)]
+        KUI[kafka-ui service<br/>topics/messages/consumer groups]
     end
 
     ATLAS[(MongoDB Atlas<br/>db: shipments)]
     ATLAS2[(MongoDB Atlas<br/>db: facilities)]
 
-    UI -->|HTTPS: /, /api/*| ALB
-    ALB -->|default route| FE
-    ALB -->|/api/shipments*, /api/simulate*| SS
-    ALB -->|/api/facilities*| FS
+    UI -->|HTTP: /, /api/*| ALB
+    ALB -->|default route, :80| FE
+    ALB -->|/api/shipments*, /api/simulate*, :80| SS
+    ALB -->|/api/facilities*, :80| FS
+    ALB -->|:8080| KUI
 
     SS <-->|produce/consume| KAFKA
     FS <-->|produce/consume| KAFKA
+    KUI -->|read topics/consumer groups| KAFKA
 
     SS -->|CRUD, $facet aggregation| ATLAS
     FS -->|atomic findAndModify| ATLAS2
@@ -126,26 +129,34 @@ facility can't both read "there's room" before either writes back (see
 | Kafka | Bitnami Kafka (KRaft mode) | Topics: `shipment-created`, `capacity-reserved`, `capacity-rejected`, `scan-event` |
 | MongoDB | Atlas (one cluster, two databases) | `shipments` db (shipment-service), `facilities` db (facility-service) — database-per-service even though they share a cluster |
 
-### React features exercised
-Hooks (`useState`, `useEffect`, `useMemo`, custom hooks), React Router with
-`React.lazy`/`Suspense` code-splitting, controlled forms via
-`react-hook-form`, server state via TanStack Query (caching, polling,
-mutations), Server-Sent Events consumed through a custom
-`useShipmentStream` hook, and a small reusable component
-(`<StatusBadge>`).
+---
 
-### MongoDB features exercised
-- **Aggregation `$facet`**: the dashboard computes status counts, daily
-  volume, and top destination facilities in one round trip
-  (`DashboardService.buildDashboard()`).
-- **Atomic `findAndModify` with `$expr`**: the capacity reservation saga
-  step (`CapacityService.tryReserve()`).
-- **Indexes**: `status` and `createdAt` on `shipments` for the dashboard and
-  filtered list queries.
-- **Database-per-service**: two logical databases in one Atlas cluster,
-  never queried across each other directly (no cross-service `$lookup`) —
-  that boundary is intentional and mirrors how you'd design this against
-  two entirely separate clusters in production.
+## 4.1 React — 5 features to talk about in an interview
+
+Pick any of these, name the file, and be ready to explain the *why*, not
+just the *what*.
+
+| # | Feature | Where | Talking point |
+|---|---|---|---|
+| 1 | **Custom hook wrapping a browser API** | [`useShipmentStream.js`](frontend/src/hooks/useShipmentStream.js) | Wraps `EventSource` (SSE) in a hook that returns `{status, events}` and cleans up the connection on unmount. Encapsulates subscribe/unsubscribe lifecycle so `TrackShipment.jsx` just consumes state — it never touches `EventSource` directly. This is the standard pattern for wrapping any imperative browser API (WebSocket, `IntersectionObserver`, etc.) in idiomatic React. |
+| 2 | **Server state vs. UI state, kept separate** | [`ShipmentList.jsx`](frontend/src/pages/ShipmentList.jsx), [`Dashboard.jsx`](frontend/src/pages/Dashboard.jsx) | TanStack Query owns *server* state (`useQuery` with `refetchInterval: 5000` for polling, cache keys like `['shipments', statusFilter, page]` so filter/page changes automatically refetch). Plain `useState` owns *UI-only* state (`statusFilter`, `page`). Conflating the two — e.g. fetching in a `useEffect` and stuffing the result into `useState` — is the most common React anti-pattern; this project deliberately avoids it. |
+| 3 | **Route-based code splitting** | [`App.jsx`](frontend/src/App.jsx) | Every page is `React.lazy(() => import('./pages/X.jsx'))`, wrapped once in a top-level `<Suspense>`. Each route's JS only downloads when the user navigates there, instead of one large bundle up front. |
+| 4 | **Controlled forms with schema-less validation** | [`CreateShipment.jsx`](frontend/src/pages/CreateShipment.jsx) | `react-hook-form`'s `register()` API — inputs stay uncontrolled internally (better perf than `useState` per field) while validation rules (`required`, `min`) are declared inline, and `formState.errors` drives inline error messages. |
+| 5 | **`useMemo` for derived data, not premature optimization** | [`Facilities.jsx`](frontend/src/pages/Facilities.jsx) | `summary` (total capacity, overall utilization %, at-risk count) is *derived* from `facilities` — recomputing it is cheap, so the `useMemo` here isn't about performance, it's about not recalculating a multi-field object on every render pass and keeping the derivation in one place. Good interview nuance: know when `useMemo` is about correctness/clarity vs. actual perf. |
+| 6 (bonus) | **Effect for cross-cutting sync, not data fetching** | [`TrackShipment.jsx`](frontend/src/pages/TrackShipment.jsx) | A `useEffect` invalidates the `next-scan-step` query whenever SSE pushes a new `status` or tracking event — using an effect to *react to state changing*, not to fetch data (that's TanStack Query's job). This is the distinction the React docs make in "You Might Not Need an Effect." |
+
+---
+
+## 4.2 MongoDB — features and aggregation operators to talk about
+
+| # | Feature | Where | Talking point |
+|---|---|---|---|
+| 1 | **`$facet` — multiple aggregations in one round trip** | [`DashboardService.buildDashboard()`](shipment-service/src/main/java/com/ups/shipment/service/DashboardService.java) | One query computes three independent results — status counts, daily volume, top destinations — each in its own pipeline branch, executed server-side in parallel. The alternative (3 separate `find`/`aggregate` calls) means 3 round trips and 3x the network overhead for the same answer. Visible live on the **Dashboard page** — each chart is labeled with the exact stage that produced it. |
+| 2 | **`$group` + accumulators** | same file | `$group` by `status` (or `destinationFacilityId`, or a truncated date) with `$sum: 1` is the aggregation-pipeline equivalent of SQL's `GROUP BY ... COUNT(*)`. Know this mapping cold — it's the most commonly asked Mongo-vs-SQL translation question. |
+| 3 | **`$dateToString` for date bucketing** | same file | Truncates `createdAt` (a `Date`) to a `"%Y-%m-%d"` string *before* grouping, so all shipments from the same calendar day collapse into one bucket — this is how you build a "volume per day" chart without pulling raw documents into the app and bucketing in Java. |
+| 4 | **Atomic `findAndModify` with an `$expr` guard** | [`CapacityService.tryReserve()`](facility-service/src/main/java/com/ups/facility/service/CapacityService.java) | The single most important correctness detail in this whole project. `$expr: {$lte: [{$add: ["$currentLoadKg", weightKg]}, "$capacityKg"]}` combined with `$inc` in **one atomic operation** means the check-then-write can't race — two concurrent shipments booked into the same facility can't both pass the capacity check before either commits. Compare this to the naive (wrong) approach: `find()` the facility, check in application code, then `update()` — which has a TOCTOU race under concurrent load. Visible on the **Facilities page** caption. |
+| 5 | **Indexes on query/sort fields** | [`Shipment.java`](shipment-service/src/main/java/com/ups/shipment/model/Shipment.java) | `@Indexed` on `status` and `createdAt` — the two fields the dashboard aggregation and the filtered shipment list both query/sort on. Know *why*: without an index, `$sort`/`$match` on these fields forces a full collection scan. |
+| 6 | **Database-per-service, one cluster** | `application.yml` in both services | `shipments` and `facilities` are two separate logical databases in one Atlas cluster — each service only ever touches its own database, no cross-service `$lookup`. This is a deliberate microservices boundary (each service owns its data), kept even though sharing one cluster physically for cost reasons — a good "how would you explain a compromise you made" interview answer. |
 
 ---
 
@@ -218,23 +229,39 @@ Full detail, prerequisites, and the exact commands live in
 [`deploy/aws/README.md`](deploy/aws/README.md) — this section is the plan
 and the reasoning behind it, useful for walking through in an interview.
 
+### 7.0 AWS services/features used — what to say about each
+
+| AWS service/feature | Where (template) | What it's doing here | Interview talking point |
+|---|---|---|---|
+| **CloudFormation** | `ecr.yaml`, `main.yaml` | Declares all infrastructure as versioned YAML; `aws cloudformation deploy` does diff-based create-or-update | "Infrastructure as code — the whole environment is reproducible from two files and one command, not click-ops." |
+| **ECS on Fargate** | `EcsCluster`, all `AWS::ECS::TaskDefinition`/`AWS::ECS::Service` resources | Runs 5 containers (frontend, shipment-service, facility-service, Kafka, Kafka UI) with no EC2 instances to manage | "Serverless containers — I pay per task's requested vCPU/memory, AWS handles the underlying host." Know the trade-off vs. the EC2 launch type (bin-packing multiple tasks onto fewer, cheaper instances) if asked. |
+| **Application Load Balancer + path-based routing** | `LoadBalancer`, `HttpListener`, `ShipmentListenerRule`, `FacilityListenerRule` | One ALB, one listener on port 80, routes `/api/shipments*`+`/api/simulate*` → shipment-service, `/api/facilities*` → facility-service, default → frontend | "Path-based routing means the React app's relative `fetch('/api/...')` calls stay same-origin — no CORS config, no per-environment API base URL." |
+| **AWS Cloud Map (Service Discovery)** | `ServiceDiscoveryNamespace`, `KafkaDiscoveryService` | Private DNS namespace `ups.local`; Kafka registers itself as `kafka.ups.local`, resolvable by the other services regardless of which ENI/IP the task lands on | "Service discovery instead of hardcoding IPs — the same problem Kubernetes solves with its internal DNS, done natively in ECS." |
+| **Amazon ECR** | `ecr.yaml` (3 repos) | Private Docker registry for the 3 images this project builds (Kafka and Kafka UI pull public images directly) | "Split into its own stack deliberately — images must exist before the ECS task defs in the main stack can reference them by URI, and ECR won't delete a non-empty repo, so cleanup order matters." |
+| **IAM roles (least-privilege task execution role)** | `TaskExecutionRole` | One role, attached to every task definition, scoped to the AWS-managed `AmazonECSTaskExecutionRolePolicy` (ECR pull + CloudWatch Logs write only) | "Tasks don't get a broad role — just enough to pull their image and write logs." |
+| **CloudWatch Logs** | `LogGroup`, `LogConfiguration` on every container definition | One log group (`/ecs/ups-tracker`), one stream prefix per service | "Every service logs to the same group with the shipment id embedded in each line, so one Logs Insights query traces a request across services and Kafka hops — see section 5." |
+| **VPC, subnets, Internet Gateway, route tables** | `Vpc`, `PublicSubnet1/2`, `InternetGateway`, `PublicRouteTable` | 1 VPC, 2 public subnets (2 AZs, required for the ALB), one IGW, no NAT gateway | "Deliberately public-subnet-only for a demo deploy — tasks get public IPs and route straight to the IGW, no NAT gateway idle cost. I know this isn't the production pattern (see 7.4)." |
+| **Security Groups** | `AlbSecurityGroup`, `ServiceSecurityGroup` | ALB SG allows inbound 80/8080 from anywhere; service SG allows all ports from the ALB SG and from itself (for inter-task Kafka traffic) | "Security groups model *who can talk to whom*, not just open ports — the self-referencing rule is what lets services reach Kafka without hardcoding an IP-based rule." |
+| **Public IPv4 addressing** | `AssignPublicIp: ENABLED` on every service's `NetworkConfiguration` | Each Fargate task gets its own public IP since there's no NAT | "Know this has a real, non-obvious cost: AWS bills $0.005/hr per public IPv4 address since Feb 2024 — see the cost table in 7.5." |
+
 ### 7.1 Target architecture
 
 Same diagram as section 2. Concretely, in AWS:
 
 - **1 VPC**, 2 public subnets across 2 AZs, an Internet Gateway, no NAT
   gateway (deliberate cost simplification — see 7.4).
-- **1 ECS Fargate cluster** running 4 services: `frontend`,
-  `shipment-service`, `facility-service`, `kafka` (all in the public
-  subnets with public IPs, since there's no NAT for private-subnet egress).
-- **1 Application Load Balancer**, 1 listener (port 80), 3 target groups,
-  2 path-based listener rules (shipment / facility) plus a default route to
-  the frontend target group.
+- **1 ECS Fargate cluster** running 5 services: `frontend`,
+  `shipment-service`, `facility-service`, `kafka`, `kafka-ui` (all in the
+  public subnets with public IPs, since there's no NAT for private-subnet
+  egress).
+- **1 Application Load Balancer**, 2 listeners (port 80 for the app, port
+  8080 for Kafka UI), 4 target groups, 2 path-based listener rules
+  (shipment / facility) plus a default route to the frontend target group.
 - **1 Cloud Map private DNS namespace** (`ups.local`) so
-  shipment-service/facility-service can reach Kafka at a stable
+  shipment-service/facility-service/kafka-ui can reach Kafka at a stable
   `kafka.ups.local:9092` regardless of which ENI the Kafka task lands on.
-- **3 ECR repositories** (one per buildable image — Kafka pulls the public
-  Bitnami image directly, so it doesn't need one).
+- **3 ECR repositories** (one per buildable image — Kafka and Kafka UI pull
+  public images directly, so they don't need one).
 - **MongoDB Atlas** — external, not provisioned by CloudFormation.
 
 ### 7.2 Why two CloudFormation stacks, not one
@@ -294,12 +321,14 @@ running continuously:
 | shipment-service task | 0.5 vCPU / 1 GB | ~$18/mo |
 | facility-service task | 0.5 vCPU / 1 GB | ~$18/mo |
 | kafka task | 0.5 vCPU / 1 GB | ~$18/mo |
+| kafka-ui task | 0.25 vCPU / 0.5 GB | ~$9/mo |
 | frontend task | 0.25 vCPU / 0.5 GB | ~$9/mo |
-| ALB | base + light LCU usage | ~$16-25/mo |
+| ALB (2 listeners: 80, 8080) | base + light LCU usage | ~$16-25/mo |
+| Public IPv4 addresses | 5 ECS tasks + ALB, $0.005/hr each | ~$18-22/mo |
 | CloudWatch Logs, ECR storage, data transfer | demo-level volume | ~$2-5/mo |
 | NAT Gateway | none — public subnets by design | $0 |
 | MongoDB Atlas | free M0 tier | $0 |
-| **Total, always-on** | | **~$85-95/mo** |
+| **Total, always-on** | | **~$110-125/mo** |
 
 None of these are fixed costs of "having deployed it" — they're hourly, so
 the number that actually matters is *how long the stack stays up*, not
@@ -332,7 +361,7 @@ ups-tracker/
   frontend/                # React + Vite, port 5173
   deploy/aws/
     ecr.yaml               # ECR repos (separate stack)
-    main.yaml              # VPC, ALB, ECS cluster, 4 services
+    main.yaml              # VPC, ALB, ECS cluster, 5 services
     deploy.sh               # build/push images, deploy both stacks
     cleanup.sh               # delete both stacks, empty ECR first
     config.env.example      # AWS_REGION + MONGO_ATLAS_URI
