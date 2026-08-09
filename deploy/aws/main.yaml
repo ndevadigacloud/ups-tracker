@@ -266,7 +266,9 @@ Resources:
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       ContainerDefinitions:
         - Name: kafka
-          Image: bitnami/kafka:3.7
+          # Bitnami only publishes ':latest' for kafka on the free Docker Hub tier now
+          # (pinned version tags moved behind a paid Bitnami Secure subscription).
+          Image: bitnami/kafka:latest
           PortMappings:
             - ContainerPort: 9092
           Environment:

@@ -10,7 +10,9 @@ services:
       - mongo-data:/data/db
 
   kafka:
-    image: bitnami/kafka:3.7
+    # Bitnami only publishes ':latest' for kafka on the free Docker Hub tier now
+    # (pinned version tags moved behind a paid Bitnami Secure subscription).
+    image: bitnami/kafka:latest
     container_name: ups-kafka
     ports:
       - "9092:9092"
