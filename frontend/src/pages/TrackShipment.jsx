@@ -4,49 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client.js'
 import { useShipmentStream } from '../hooks/useShipmentStream.js'
 import StatusBadge from '../components/StatusBadge.jsx'
+import { describeStep } from '../utils/scanStep.js'
 
 const TERMINAL_STATUSES = ['DELIVERED', 'CAPACITY_REJECTED', 'EXCEPTION']
-
-/**
- * Turns a bare eventType + the shipment/facility data into the label a real
- * driver-facing scanner app would show - so the single action button reads
- * like "Depart Louisville Air Hub" instead of a raw enum name.
- */
-function describeStep(eventType, shipment, facilitiesById) {
-  const originName = facilitiesById.get(shipment.originFacilityId)?.name ?? 'origin facility'
-  const destinationName = facilitiesById.get(shipment.destinationFacilityId)?.name ?? 'destination facility'
-  const receiverCity = shipment.receiver?.city ?? 'destination city'
-  const receiverName = shipment.receiver?.name ?? 'the receiver'
-
-  switch (eventType) {
-    case 'ARRIVED_AT_HUB':
-      return {
-        buttonLabel: `Confirm arrival at ${originName}`,
-        location: originName,
-        description: `Package scanned in at ${originName}`,
-      }
-    case 'DEPARTED_HUB':
-      return {
-        buttonLabel: `Depart ${originName} toward ${receiverCity}`,
-        location: originName,
-        description: `Departed ${originName}, en route to ${destinationName}`,
-      }
-    case 'OUT_FOR_DELIVERY':
-      return {
-        buttonLabel: `Load onto delivery vehicle in ${receiverCity}`,
-        location: `${receiverCity} delivery route`,
-        description: `Out for delivery to ${receiverName}`,
-      }
-    case 'DELIVERED':
-      return {
-        buttonLabel: `Confirm delivery to ${receiverName}`,
-        location: shipment.receiver?.street ?? receiverCity,
-        description: `Delivered to ${receiverName}`,
-      }
-    default:
-      return { buttonLabel: eventType, location: '', description: '' }
-  }
-}
 
 export default function TrackShipment() {
   const { id } = useParams()
@@ -95,6 +55,7 @@ export default function TrackShipment() {
     mutationFn: (step) => api.simulateScan(id, step),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipments'] })
+      queryClient.invalidateQueries({ queryKey: ['shipments-all'] })
       queryClient.invalidateQueries({ queryKey: ['next-scan-step', id] })
     },
   })
