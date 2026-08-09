@@ -46,5 +46,11 @@ logging:
   level:
     root: INFO
     com.ups.facility: INFO
-    org.springframework.kafka: WARN
-    org.apache.kafka: WARN
+    # Temporarily bumped from WARN while root-causing why the consumer isn't
+    # picking up messages - at INFO these show broker connection attempts,
+    # coordinator discovery, and group join/rebalance ("(Re-)joining group",
+    # "Successfully joined group", "Connection to node X could not be
+    # established"), which is exactly the client-level detail app code can't
+    # see or log itself. Drop back to WARN once this is root-caused.
+    org.springframework.kafka: INFO
+    org.apache.kafka: INFO
