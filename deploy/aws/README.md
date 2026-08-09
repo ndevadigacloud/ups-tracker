@@ -22,7 +22,13 @@ autoscaling.
 
 - AWS CLI v2, configured (`aws configure`) with a user/role that can create
   VPCs, ECS, ALB, ECR, IAM roles, Cloud Map, and CloudWatch Logs.
-- Docker, running locally.
+- Docker, running locally, with `buildx` available (bundled with Docker
+  Desktop by default — check with `docker buildx version`). `deploy.sh`
+  builds multi-arch (`linux/amd64` + `linux/arm64`) images so the same
+  images work on ECS Fargate regardless of whether you're building on
+  Apple Silicon, Intel, or an x86 CI runner. On Apple Silicon, the amd64
+  leg builds under QEMU emulation and is noticeably slower than the native
+  arm64 leg — expect the first build of each image to take a few minutes.
 - A MongoDB Atlas cluster (free tier is fine): create it at
   https://cloud.mongodb.com, add a database user, and allow network access
   from `0.0.0.0/0` (Atlas requires an allowlist; the ECS tasks get public IPs

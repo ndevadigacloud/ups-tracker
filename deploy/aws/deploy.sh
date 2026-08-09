@@ -40,15 +40,23 @@ echo "==> [2/5] Logging in to ECR"
 aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-echo "==> [3/5] Building and pushing images (tag: $IMAGE_TAG)"
-docker build -t "$SHIPMENT_REPO_URI:$IMAGE_TAG" "$ROOT_DIR/shipment-service"
-docker push "$SHIPMENT_REPO_URI:$IMAGE_TAG"
+# Fargate runs amd64 by default. Building with the plain `docker build` on an
+# Apple Silicon Mac produces an arm64-only image, which fails to start on ECS
+# with an exec-format/architecture error. buildx builds (and pushes, in one
+# step via --push) a multi-arch manifest covering both, so the same image
+# works whether it's built on Apple Silicon, Intel, or CI.
+PLATFORMS="linux/amd64,linux/arm64"
+BUILDER_NAME="ups-tracker-builder"
+if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+  echo "    creating buildx builder '$BUILDER_NAME' (docker-container driver, required for multi-arch)"
+  docker buildx create --name "$BUILDER_NAME" --driver docker-container --bootstrap
+fi
+docker buildx use "$BUILDER_NAME"
 
-docker build -t "$FACILITY_REPO_URI:$IMAGE_TAG" "$ROOT_DIR/facility-service"
-docker push "$FACILITY_REPO_URI:$IMAGE_TAG"
-
-docker build -t "$FRONTEND_REPO_URI:$IMAGE_TAG" "$ROOT_DIR/frontend"
-docker push "$FRONTEND_REPO_URI:$IMAGE_TAG"
+echo "==> [3/5] Building and pushing multi-arch images ($PLATFORMS, tag: $IMAGE_TAG)"
+docker buildx build --platform "$PLATFORMS" -t "$SHIPMENT_REPO_URI:$IMAGE_TAG" --push "$ROOT_DIR/shipment-service"
+docker buildx build --platform "$PLATFORMS" -t "$FACILITY_REPO_URI:$IMAGE_TAG" --push "$ROOT_DIR/facility-service"
+docker buildx build --platform "$PLATFORMS" -t "$FRONTEND_REPO_URI:$IMAGE_TAG" --push "$ROOT_DIR/frontend"
 
 echo "==> [4/5] Deploying main stack ($MAIN_STACK)"
 aws cloudformation deploy \
