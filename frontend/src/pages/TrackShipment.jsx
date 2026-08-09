@@ -5,6 +5,8 @@ import { api } from '../api/client.js'
 import { useShipmentStream } from '../hooks/useShipmentStream.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 
+const TERMINAL_STATUSES = ['DELIVERED', 'CAPACITY_REJECTED', 'EXCEPTION']
+
 /**
  * Turns a bare eventType + the shipment/facility data into the label a real
  * driver-facing scanner app would show - so the single action button reads
@@ -50,9 +52,15 @@ export default function TrackShipment() {
   const { id } = useParams()
   const queryClient = useQueryClient()
 
+  // SSE delivers instant updates, but a push can be missed if the saga
+  // resolves faster than the browser's EventSource finishes connecting
+  // (ShipmentSseHub drops events with no subscribers - there's no replay).
+  // Poll as a safety net so the page can't get stuck showing stale status;
+  // stop once the shipment reaches a terminal state.
   const { data: shipment } = useQuery({
     queryKey: ['shipment', id],
     queryFn: () => api.getShipment(id),
+    refetchInterval: (query) => (TERMINAL_STATUSES.includes(query.state.data?.status) ? false : 3000),
   })
 
   const { data: initialEvents = [] } = useQuery({
